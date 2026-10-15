@@ -15,38 +15,110 @@ namespace BatchPlotBP
 {
     public class BpCommands
     {
+        private static BpForm _form;
+        private static BpConfig _cfg;
+        private static BpState _state;
+        private static Document _sessionDoc;
+        private static BpAction _pendingAction = BpAction.None;
+        private static bool _actionQueued;
+
         [CommandMethod("BP")]
         public void Run()
         {
-            Document doc = Application.DocumentManager.MdiActiveDocument;
-            if (doc == null) return;
+            Document doc =
+                Application.DocumentManager.MdiActiveDocument;
 
-            Editor ed = doc.Editor;
-            BpConfig cfg = BpConfig.Load();
-            BpState st = new BpState();
+            if (doc == null)
+                return;
 
-            while (true)
+            if (_form != null && !_form.IsDisposed)
             {
-                BpForm form = new BpForm(cfg, st);
-                Application.ShowModalDialog(null, form, false);
-
-                BpAction act = form.Action;
-                form.Dispose();
-
-                if (act == BpAction.None) break;
-
-                try
-                {
-                    Handle(act, doc, ed, cfg, st);
-                }
-                catch (System.Exception ex)
-                {
-                    st.Status = "Lỗi: " + ex.Message;
-                }
+                _form.Activate();
+                return;
             }
+
+            _sessionDoc = doc;
+            _cfg = BpConfig.Load();
+            _state = new BpState();
+
+            _form = new BpForm(_cfg, _state);
+            _form.ActionRequested += QueueAction;
+
+            _form.FormClosed += (sender, args) =>
+            {
+                _form = null;
+                _sessionDoc = null;
+                _pendingAction = BpAction.None;
+                _actionQueued = false;
+            };
+
+            Application.ShowModelessDialog(_form);
         }
 
-        void Handle(
+        private void QueueAction(BpAction action)
+        {
+            if (_sessionDoc == null ||
+                _form == null ||
+                _form.IsDisposed ||
+                _actionQueued)
+            {
+                return;
+            }
+
+            _pendingAction = action;
+            _actionQueued = true;
+
+            _sessionDoc.SendStringToExecute(
+                "BP_ACTION\n",
+                true,
+                false,
+                false);
+        }
+
+        [CommandMethod("BP_ACTION")]
+        public void RunPendingAction()
+        {
+            Document doc =
+                Application.DocumentManager.MdiActiveDocument;
+
+            if (doc == null ||
+                _form == null ||
+                _form.IsDisposed ||
+                _cfg == null ||
+                _state == null)
+            {
+                _actionQueued = false;
+                return;
+            }
+
+            BpAction action = _pendingAction;
+            _pendingAction = BpAction.None;
+            _actionQueued = false;
+
+            if (action == BpAction.None)
+                return;
+
+            try
+            {
+                Handle(
+                    action,
+                    doc,
+                    doc.Editor,
+                    _cfg,
+                    _state);
+            }
+            catch (System.Exception ex)
+            {
+                _state.Status = "Lỗi: " + ex.Message;
+                doc.Editor.WriteMessage(
+                    "\nBatchPlotBP: " + ex.Message);
+            }
+
+            if (_form != null && !_form.IsDisposed)
+                _form.RefreshFromState();
+        }
+
+        private void Handle(
             BpAction act,
             Document doc,
             Editor ed,
@@ -76,184 +148,111 @@ namespace BatchPlotBP
 
                     if (st.Frames.Count > 0)
                     {
-                        FrameService.AddNumbers(
-                            doc,
-                            FrameService.Sort(st.Frames, cfg));
+                        List<Frame> ordered =
+                            FrameService.Sort(st.Frames, cfg);
+
+                        FrameService.AddNumbers(doc, ordered);
 
                         st.Status =
                             "Đã đánh STT cho " +
-                            st.Frames.Count +
-                            " khung (layer BPL_STT).";
+                            ordered.Count +
+                            " khung (layer BPL_STT, không bị in).";
                     }
                     break;
 
                 case BpAction.ClearNumber:
                     {
                         int n = FrameService.ClearNumbers(doc);
-                        st.Status = "Đã xóa " + n + " STT.";
+
+                        st.Status =
+                            "Đã xóa " + n +
+                            " đối tượng STT và đường chéo.";
+                        break;
                     }
-                    break;
 
                 case BpAction.Plot:
-                    Plot(doc, ed, cfg, st);
-                    break;
+                    {
+                        if (st.Frames.Count == 0)
+                            Scan(doc, ed, cfg, st);
+
+                        if (st.Frames.Count == 0)
+                            break;
+
+                        using (var dialog = new FolderBrowserDialog())
+                        {
+                            dialog.Description =
+                                "Chọn thư mục lưu các file PDF";
+
+                            dialog.ShowNewFolderButton = true;
+
+                            string initial =
+                                !string.IsNullOrWhiteSpace(cfg.OutputFolder) &&
+                                System.IO.Directory.Exists(cfg.OutputFolder)
+                                    ? cfg.OutputFolder
+                                    : PlotService.OutFolder(doc, cfg);
+
+                            dialog.SelectedPath = initial;
+
+                            if (dialog.ShowDialog() != DialogResult.OK)
+                            {
+                                st.Status = "Đã hủy thao tác in.";
+                                break;
+                            }
+
+                            cfg.OutputFolder = dialog.SelectedPath;
+                            cfg.Save();
+                        }
+
+                        List<Frame> ordered =
+                            FrameService.Sort(st.Frames, cfg);
+
+                        string err;
+
+                        int ok = PlotService.Plot(
+                            doc,
+                            ordered,
+                            cfg,
+                            out err);
+
+                        st.LastPlotSucceeded =
+                            ok > 0 && string.IsNullOrEmpty(err);
+
+                        st.OutputFolder =
+                            st.LastPlotSucceeded
+                                ? cfg.OutputFolder
+                                : "";
+
+                        st.Status =
+                            "Hoàn tất: " +
+                            ok + "/" + ordered.Count +
+                            " trang." +
+                            (err != null ? " Lỗi: " + err : "") +
+                            (st.LastPlotSucceeded
+                                ? " Thư mục: " + st.OutputFolder
+                                : "");
+
+                        break;
+                    }
 
                 case BpAction.OpenFolder:
-                    OpenOutputFolder(st);
+                    if (!string.IsNullOrWhiteSpace(st.OutputFolder) &&
+                        System.IO.Directory.Exists(st.OutputFolder))
+                    {
+                        Process.Start(
+                            "explorer.exe",
+                            "\"" + st.OutputFolder + "\"");
+                    }
+                    else
+                    {
+                        st.Status =
+                            "Chưa có thư mục PDF hợp lệ. " +
+                            "Hãy in thành công trước.";
+                    }
                     break;
             }
         }
 
-        void Plot(
-            Document doc,
-            Editor ed,
-            BpConfig cfg,
-            BpState st)
-        {
-            if (st.Frames.Count == 0)
-                Scan(doc, ed, cfg, st);
-
-            if (st.Frames.Count == 0)
-                return;
-
-            // Sort frames before checking names and plotting.
-            List<Frame> ordered = FrameService.Sort(st.Frames, cfg);
-
-            // Check duplicate TEXT/MTEXT names before plotting.
-            List<string> duplicates =
-                PlotService.FindDuplicateTextNames(
-                    doc,
-                    ordered,
-                    cfg);
-
-            if (duplicates.Count > 0)
-            {
-                string duplicateList =
-                    string.Join(
-                        Environment.NewLine,
-                        duplicates);
-
-                string message =
-                    "Phát hiện tên TEXT/MTEXT bị trùng:" +
-                    Environment.NewLine +
-                    Environment.NewLine +
-                    duplicateList +
-                    Environment.NewLine +
-                    Environment.NewLine;
-
-                if (cfg.MergePdf)
-                {
-                    message +=
-                        "Bạn đang bật chế độ gộp PDF. " +
-                        "Tất cả khung sẽ được in vào một file PDF nhiều trang." +
-                        Environment.NewLine +
-                        "Tên từng khung không được dùng làm tên file PDF riêng." +
-                        Environment.NewLine +
-                        Environment.NewLine +
-                        "Bạn có muốn tiếp tục in không?";
-                }
-                else
-                {
-                    message +=
-                        "Nếu tiếp tục, plugin sẽ tự thêm hậu tố " +
-                        "(1), (2)... khi cần để tránh trùng tên file PDF." +
-                        Environment.NewLine +
-                        Environment.NewLine +
-                        "PDF đã tồn tại sẽ không bị ghi đè." +
-                        Environment.NewLine +
-                        Environment.NewLine +
-                        "Bạn có muốn tiếp tục in không?";
-                }
-
-                DialogResult answer = MessageBox.Show(
-                    message,
-                    "Cảnh báo trùng tên PDF",
-                    MessageBoxButtons.YesNo,
-                    MessageBoxIcon.Warning,
-                    MessageBoxDefaultButton.Button2);
-
-                if (answer != DialogResult.Yes)
-                {
-                    st.LastPlotSucceeded = false;
-                    st.OutputFolder = "";
-                    st.Status =
-                        "Đã hủy in do tên TEXT/MTEXT bị trùng.";
-                    return;
-                }
-            }
-
-            using (var dialog = new FolderBrowserDialog())
-            {
-                dialog.Description = "Chọn thư mục lưu các file PDF";
-                dialog.ShowNewFolderButton = true;
-
-                string initial = PlotService.OutFolder(doc, cfg);
-
-                if (!string.IsNullOrWhiteSpace(initial) &&
-                    System.IO.Directory.Exists(initial))
-                {
-                    dialog.SelectedPath = initial;
-                }
-
-                if (dialog.ShowDialog() != DialogResult.OK)
-                {
-                    st.Status = "Đã hủy thao tác in.";
-                    return;
-                }
-
-                cfg.OutputFolder = dialog.SelectedPath;
-                cfg.Save();
-            }
-
-            string err;
-
-            int ok = PlotService.Plot(
-                doc,
-                ordered,
-                cfg,
-                out err);
-
-            st.LastPlotSucceeded =
-                ok == ordered.Count &&
-                string.IsNullOrEmpty(err);
-
-            st.OutputFolder =
-                st.LastPlotSucceeded
-                    ? cfg.OutputFolder
-                    : "";
-
-            st.Status =
-                "Hoàn tất: " +
-                ok + "/" + ordered.Count + " trang." +
-                (string.IsNullOrEmpty(err)
-                    ? ""
-                    : " Lỗi: " + err) +
-                (st.LastPlotSucceeded
-                    ? " Thư mục: " + st.OutputFolder
-                    : "");
-        }
-
-        void OpenOutputFolder(BpState st)
-        {
-            if (st.LastPlotSucceeded &&
-                !string.IsNullOrWhiteSpace(st.OutputFolder) &&
-                System.IO.Directory.Exists(st.OutputFolder))
-            {
-                Process.Start(
-                    new ProcessStartInfo
-                    {
-                        FileName = st.OutputFolder,
-                        UseShellExecute = true
-                    });
-            }
-            else
-            {
-                st.Status =
-                    "Chưa có thư mục PDF hợp lệ. Hãy in thành công trước.";
-            }
-        }
-
-        void PickSample(
+        private void PickSample(
             Document doc,
             Editor ed,
             BpConfig cfg,
@@ -263,33 +262,30 @@ namespace BatchPlotBP
                 ed.GetEntity("\nChọn 1 khung mẫu: ");
 
             if (per.Status != PromptStatus.OK)
+            {
+                st.Status = "Đã hủy chọn khung mẫu.";
                 return;
+            }
 
             string layer;
 
             using (var tr =
                 doc.Database.TransactionManager.StartTransaction())
             {
-                Entity ent =
-                    tr.GetObject(
-                        per.ObjectId,
-                        OpenMode.ForRead) as Entity;
-
-                if (ent == null)
-                {
-                    st.Status = "Đối tượng đã chọn không hợp lệ.";
-                    return;
-                }
+                var ent = (Entity)tr.GetObject(
+                    per.ObjectId,
+                    OpenMode.ForRead);
 
                 layer = ent.Layer;
                 tr.Commit();
             }
 
-            var pko = new PromptKeywordOptions(
-                "\nGóc chuẩn để sắp xếp");
+            var pko =
+                new PromptKeywordOptions(
+                    "\nChọn góc chuẩn để sắp xếp");
 
-            foreach (string a in FrameService.Anchors)
-                pko.Keywords.Add(a);
+            foreach (string anchor in FrameService.Anchors)
+                pko.Keywords.Add(anchor);
 
             pko.Keywords.Default = "TopLeft";
             pko.AllowNone = true;
@@ -298,9 +294,12 @@ namespace BatchPlotBP
 
             if (kr.Status != PromptStatus.OK &&
                 kr.Status != PromptStatus.None)
+            {
+                st.Status = "Đã hủy chọn góc chuẩn.";
                 return;
+            }
 
-            string anchor =
+            string selectedAnchor =
                 string.IsNullOrEmpty(kr.StringResult)
                     ? "TopLeft"
                     : kr.StringResult;
@@ -315,20 +314,19 @@ namespace BatchPlotBP
                 new SampleDef
                 {
                     Layer = layer,
-                    Anchor = anchor
+                    Anchor = selectedAnchor
                 });
 
             cfg.Save();
-
             st.Frames.Clear();
 
             st.Status =
                 "Đã thêm khung mẫu: layer " +
-                layer + " / " + anchor +
+                layer + " / " + selectedAnchor +
                 ". Hãy quét khung.";
         }
 
-        void Scan(
+        private void Scan(
             Document doc,
             Editor ed,
             BpConfig cfg,
@@ -339,7 +337,8 @@ namespace BatchPlotBP
             if (cfg.Samples.Count == 0)
             {
                 st.Status =
-                    "Chưa có khung mẫu. Bấm 'Chọn khung mẫu' trước.";
+                    "Chưa có khung mẫu. " +
+                    "Bấm 'Chọn khung mẫu' trước.";
                 return;
             }
 
@@ -348,7 +347,8 @@ namespace BatchPlotBP
             if (cfg.SortMode == "Pick")
             {
                 ed.WriteMessage(
-                    "\nChọn từng khung theo thứ tự in. Enter để kết thúc.");
+                    "\nChọn từng khung theo thứ tự in. " +
+                    "Nhấn Enter để kết thúc.");
 
                 while (true)
                 {
@@ -364,30 +364,47 @@ namespace BatchPlotBP
             }
             else
             {
-                var pko = new PromptKeywordOptions(
-                    "\nQuét khung [Toan/Vung]");
+                var pko =
+                    new PromptKeywordOptions(
+                        "\nChọn phạm vi quét " +
+                        "[Toàn bản vẽ = ToanBanVe/" +
+                        "Vùng quét = VungQuet]");
 
-                pko.Keywords.Add("Toan");
-                pko.Keywords.Add("Vung");
-                pko.Keywords.Default = "Toan";
+                pko.Keywords.Add("ToanBanVe");
+                pko.Keywords.Add("VungQuet");
+                pko.Keywords.Default = "ToanBanVe";
                 pko.AllowNone = true;
 
                 PromptResult kr = ed.GetKeywords(pko);
 
                 if (kr.Status != PromptStatus.OK &&
                     kr.Status != PromptStatus.None)
+                {
+                    st.Status = "Đã hủy quét khung.";
                     return;
+                }
+
+                string scope =
+                    string.IsNullOrEmpty(kr.StringResult)
+                        ? "ToanBanVe"
+                        : kr.StringResult;
 
                 SelectionFilter filter =
                     FrameService.MakeFilter(cfg, false);
 
-                PromptSelectionResult sr =
-                    string.Equals(
-                        kr.StringResult,
-                        "Vung",
-                        StringComparison.OrdinalIgnoreCase)
-                        ? ed.GetSelection(filter)
-                        : ed.SelectAll(filter);
+                PromptSelectionResult sr;
+
+                if (string.Equals(
+                    scope,
+                    "VungQuet",
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    sr = ed.GetSelection(filter);
+                }
+                else
+                {
+                    sr = ed.SelectAll(filter);
+                }
 
                 if (sr.Status == PromptStatus.OK)
                     ids.AddRange(sr.Value.GetObjectIds());
@@ -400,8 +417,7 @@ namespace BatchPlotBP
                     cfg);
 
             st.Status = st.Frames.Count > 0
-                ? "Đã quét: " +
-                  st.Frames.Count +
+                ? "Đã quét: " + st.Frames.Count +
                   " khung sẵn sàng."
                 : FrameService.Diagnose(doc, cfg);
         }
