@@ -40,7 +40,7 @@ namespace BatchPlotBP
             MinimizeBox = true;
             MaximizeBox = false;
             MinimumSize = new Size(716, 649);
-            Font = new Font("Segoe UI", 9f);
+            this.Font = new System.Drawing.Font("Segoe UI", 9f);
 
             Build();
             LoadAll();
