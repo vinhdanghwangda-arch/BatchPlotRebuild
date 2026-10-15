@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
@@ -24,7 +23,6 @@ namespace BatchPlotBP
     public class BpForm : Form
     {
         public BpAction Action = BpAction.None;
-
         public event Action<BpAction> ActionRequested;
 
         private readonly BpConfig cfg;
@@ -72,7 +70,6 @@ namespace BatchPlotBP
             MaximizeBox = false;
             MinimizeBox = true;
             ShowInTaskbar = true;
-
             Font = new System.Drawing.Font("Segoe UI", 9f);
 
             Build();
@@ -124,14 +121,7 @@ namespace BatchPlotBP
             int w,
             int h)
         {
-            return Add(
-                parent,
-                new Button(),
-                x,
-                y,
-                w,
-                h,
-                text);
+            return Add(parent, new Button(), x, y, w, h, text);
         }
 
         private void Build()
@@ -187,6 +177,7 @@ namespace BatchPlotBP
                 g1, new RadioButton(),
                 578, 66, 90, 24, "Tự động");
 
+
             // 2. Drawing frames
             var g2 = Add(
                 this,
@@ -195,7 +186,8 @@ namespace BatchPlotBP
                 "2. Khung in");
 
             lblSamples = Lbl(
-                g2, "", 15, 20, 650, 22);
+                g2, "",
+                15, 20, 650, 22);
 
             bPick = Btn(
                 g2, "Chọn khung mẫu",
@@ -210,7 +202,8 @@ namespace BatchPlotBP
                 325, 56, 150, 34);
 
             lblCount = Lbl(
-                g2, "", 485, 56, 185, 34);
+                g2, "",
+                485, 56, 185, 34);
 
             bPick.Click += (sender, args) =>
                 Finish(BpAction.Pick);
@@ -221,7 +214,9 @@ namespace BatchPlotBP
             bScan.Click += (sender, args) =>
                 Finish(BpAction.Scan);
 
+
             // 3. Sorting order
+            // Sorting settings are independent of scan options.
             var g3 = Add(
                 this,
                 new GroupBox(),
@@ -242,6 +237,7 @@ namespace BatchPlotBP
                 g3, new RadioButton(),
                 495, 24, 170, 24,
                 "Thứ tự chọn");
+
 
             // 4. Numbering
             var g4 = Add(
@@ -264,6 +260,7 @@ namespace BatchPlotBP
             bDel.Click += (sender, args) =>
                 Finish(BpAction.ClearNumber);
 
+
             // 5. Printing options
             var g5 = Add(
                 this,
@@ -277,6 +274,7 @@ namespace BatchPlotBP
                 15, 30, 250, 24,
                 "Gộp thành 1 file PDF");
 
+
             // 6. PDF naming rules
             var g6 = Add(
                 this,
@@ -284,7 +282,9 @@ namespace BatchPlotBP
                 10, 382, 680, 66,
                 "6. Quy tắc đặt tên bản vẽ");
 
-            Lbl(g6, "Đặt tên theo:", 12, 25, 90, 24);
+            Lbl(
+                g6, "Đặt tên theo:",
+                12, 25, 90, 24);
 
             cbNameMode = Add(
                 g6,
@@ -301,7 +301,9 @@ namespace BatchPlotBP
                     "TEXT / MTEXT trong khung"
                 });
 
-            Lbl(g6, "Đối tượng:", 300, 25, 70, 24);
+            Lbl(
+                g6, "Đối tượng:",
+                300, 25, 70, 24);
 
             cbNameObject = Add(
                 g6,
@@ -319,7 +321,9 @@ namespace BatchPlotBP
                     "Chỉ MTEXT"
                 });
 
-            Lbl(g6, "Layer:", 500, 25, 45, 24);
+            Lbl(
+                g6, "Layer:",
+                500, 25, 45, 24);
 
             cbNameLayer = Add(
                 g6,
@@ -337,12 +341,13 @@ namespace BatchPlotBP
             LoadDrawingLayers();
             UpdateNameControls();
 
-            // Status label: separated from the bottom buttons.
-            lblStatus = Lbl(
-                this, "", 12, 452, 676, 30);
 
-            // Bottom action buttons.
-            // Moved down to prevent overlap with lblStatus.
+            // 7. Status and bottom buttons
+            // Keep the status label and buttons in separate areas.
+            lblStatus = Lbl(
+                this, "",
+                12, 452, 676, 30);
+
             bOpen = Btn(
                 this, "Mở Folder PDF",
                 270, 490, 130, 38);
@@ -355,7 +360,7 @@ namespace BatchPlotBP
                 this, "Bắt đầu in",
                 550, 490, 140, 38);
 
-            // Ensure buttons are visible above other controls.
+            // Ensure the buttons remain visible above other controls.
             bOpen.BringToFront();
             bInfo.BringToFront();
             bPlot.BringToFront();
@@ -367,8 +372,7 @@ namespace BatchPlotBP
                 MessageBox.Show(
                     this,
                     "Batch Plot BP\n" +
-                    "In hàng loạt theo khung, xuất PDF " +
-                    "vào thư mục đã chọn.\n\n" +
+                    "In hàng loạt theo khung, xuất PDF vào thư mục đã chọn.\n\n" +
                     "Cấu hình: " + BpConfig.CfgPath,
                     "Thông tin",
                     MessageBoxButtons.OK,
@@ -377,12 +381,11 @@ namespace BatchPlotBP
             bPlot.Click += (sender, args) =>
                 Finish(BpAction.Plot);
 
-            cbPrinter.SelectedIndexChanged +=
-                (sender, args) =>
-                {
-                    if (!loading)
-                        LoadPapers(cbPaper.Text);
-                };
+            cbPrinter.SelectedIndexChanged += (sender, args) =>
+            {
+                if (!loading)
+                    LoadPapers(cbPaper.Text);
+            };
         }
 
         private static string AnchorVi(string anchor)
@@ -400,9 +403,10 @@ namespace BatchPlotBP
 
                 case "BottomRight":
                     return "Dưới-Phải";
-            }
 
-            return anchor;
+                default:
+                    return anchor;
+            }
         }
 
         private static void Select(
@@ -441,8 +445,7 @@ namespace BatchPlotBP
             try
             {
                 using (Transaction tr =
-                    doc.Database.TransactionManager
-                        .StartTransaction())
+                    doc.Database.TransactionManager.StartTransaction())
                 {
                     LayerTable layerTable =
                         (LayerTable)tr.GetObject(
@@ -474,7 +477,6 @@ namespace BatchPlotBP
         private void LoadPapers(string keep)
         {
             loading = true;
-
             cbPaper.Items.Clear();
 
             try
@@ -574,11 +576,8 @@ namespace BatchPlotBP
                 cfg.NameMode == "Text" ? 1 : 0;
 
             cbNameObject.SelectedIndex =
-                cfg.NameObjectType == "Text"
-                    ? 1
-                    : cfg.NameObjectType == "MText"
-                        ? 2
-                        : 0;
+                cfg.NameObjectType == "Text" ? 1 :
+                cfg.NameObjectType == "MText" ? 2 : 0;
 
             if (!string.IsNullOrWhiteSpace(cfg.NameLayer))
                 Select(cbNameLayer, cfg.NameLayer);
@@ -593,24 +592,19 @@ namespace BatchPlotBP
             cfg.PlotStyle = cbStyle.Text;
 
             cfg.Orientation =
-                rbPortrait.Checked
-                    ? "Portrait"
-                    : rbAuto.Checked
-                        ? "Auto"
-                        : "Landscape";
+                rbPortrait.Checked ? "Portrait" :
+                rbAuto.Checked ? "Auto" :
+                "Landscape";
 
             string mode =
-                rbLeftRight.Checked
-                    ? "LeftRight"
-                    : rbPick.Checked
-                        ? "Pick"
-                        : "TopDown";
+                rbLeftRight.Checked ? "LeftRight" :
+                rbPick.Checked ? "Pick" :
+                "TopDown";
 
             if (mode != cfg.SortMode)
             {
                 cfg.SortMode = mode;
                 st.Frames.Clear();
-
                 st.Status =
                     "Đã đổi thứ tự sắp xếp - hãy quét lại khung.";
             }
@@ -618,16 +612,12 @@ namespace BatchPlotBP
             cfg.MergePdf = chkMerge.Checked;
 
             cfg.NameMode =
-                cbNameMode.SelectedIndex == 1
-                    ? "Text"
-                    : "Cad";
+                cbNameMode.SelectedIndex == 1 ? "Text" : "Cad";
 
             cfg.NameObjectType =
-                cbNameObject.SelectedIndex == 1
-                    ? "Text"
-                    : cbNameObject.SelectedIndex == 2
-                        ? "MText"
-                        : "Both";
+                cbNameObject.SelectedIndex == 1 ? "Text" :
+                cbNameObject.SelectedIndex == 2 ? "MText" :
+                "Both";
 
             cfg.NameLayer = cbNameLayer.Text;
         }
@@ -651,9 +641,11 @@ namespace BatchPlotBP
 
             Action = action;
 
-            ActionRequested?.Invoke(action);
+            // Hide the modeless form before requesting
+            // AutoCAD command-context work.
+            Hide();
 
-            // Keep the modeless window open.
+            ActionRequested?.Invoke(action);
         }
 
         public void RefreshFromState()
@@ -667,17 +659,15 @@ namespace BatchPlotBP
                     : string.Join(
                         " | ",
                         cfg.Samples.Select(
-                            sample =>
-                                "Layer: " + sample.Layer +
-                                " [" + AnchorVi(sample.Anchor) + "]")
-                        .ToArray());
+                            s => "Layer: " + s.Layer +
+                                 " [" + AnchorVi(s.Anchor) + "]"
+                        ).ToArray());
 
             lblSamples.ForeColor =
                 Color.FromArgb(0, 102, 204);
 
             lblCount.Text =
-                "→ " + st.Frames.Count +
-                " khung sẵn sàng";
+                "→ " + st.Frames.Count + " khung sẵn sàng";
 
             lblStatus.Text = st.Status;
 
