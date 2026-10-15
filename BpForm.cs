@@ -5,6 +5,7 @@ using System.Linq;
 using System.Windows.Forms;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
+using Application = Autodesk.AutoCAD.ApplicationServices.Application;
 
 namespace BatchPlotBP
 {
@@ -71,7 +72,9 @@ namespace BatchPlotBP
             MaximizeBox = false;
             MinimizeBox = true;
             ShowInTaskbar = true;
-            Font = new Font("Segoe UI", 9f);
+
+            // Explicitly use System.Drawing.Font to avoid ambiguity.
+            Font = new System.Drawing.Font("Segoe UI", 9f);
 
             Build();
             LoadAll();
@@ -469,8 +472,7 @@ namespace BatchPlotBP
 
             try
             {
-                using (var ps =
-                    new PlotSettings(true))
+                using (var ps = new PlotSettings(true))
                 {
                     PlotSettingsValidator validator =
                         PlotSettingsValidator.Current;
