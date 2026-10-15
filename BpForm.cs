@@ -73,7 +73,6 @@ namespace BatchPlotBP
             MinimizeBox = true;
             ShowInTaskbar = true;
 
-            // Explicitly use System.Drawing.Font to avoid ambiguity.
             Font = new System.Drawing.Font("Segoe UI", 9f);
 
             Build();
@@ -338,20 +337,28 @@ namespace BatchPlotBP
             LoadDrawingLayers();
             UpdateNameControls();
 
+            // Status label: separated from the bottom buttons.
             lblStatus = Lbl(
-                this, "", 12, 452, 676, 36);
+                this, "", 12, 452, 676, 30);
 
+            // Bottom action buttons.
+            // Moved down to prevent overlap with lblStatus.
             bOpen = Btn(
                 this, "Mở Folder PDF",
-                270, 458, 130, 38);
+                270, 490, 130, 38);
 
             var bInfo = Btn(
                 this, "Thông tin",
-                410, 458, 130, 38);
+                410, 490, 130, 38);
 
             bPlot = Btn(
                 this, "Bắt đầu in",
-                550, 458, 140, 38);
+                550, 490, 140, 38);
+
+            // Ensure buttons are visible above other controls.
+            bOpen.BringToFront();
+            bInfo.BringToFront();
+            bPlot.BringToFront();
 
             bOpen.Click += (sender, args) =>
                 Finish(BpAction.OpenFolder);
@@ -646,7 +653,7 @@ namespace BatchPlotBP
 
             ActionRequested?.Invoke(action);
 
-            // Intentionally keep the modeless window open.
+            // Keep the modeless window open.
         }
 
         public void RefreshFromState()
