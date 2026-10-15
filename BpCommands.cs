@@ -6,6 +6,7 @@ using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.EditorInput;
 using Autodesk.AutoCAD.Runtime;
+using System.Windows.Forms;
 using Application = Autodesk.AutoCAD.ApplicationServices.Application;
 
 [assembly: CommandClass(typeof(BatchPlotBP.BpCommands))]
@@ -18,24 +19,39 @@ namespace BatchPlotBP
         public void Run()
         {
             Document doc = Application.DocumentManager.MdiActiveDocument;
+            if (doc == null) return;
+
             Editor ed = doc.Editor;
             BpConfig cfg = BpConfig.Load();
             BpState st = new BpState();
 
-            // Hop thoai dong lai de nguoi dung chon doi tuong tren ban ve, xong mo lai
             while (true)
             {
                 BpForm form = new BpForm(cfg, st);
                 Application.ShowModalDialog(null, form, false);
+
                 BpAction act = form.Action;
                 form.Dispose();
+
                 if (act == BpAction.None) break;
-                try { Handle(act, doc, ed, cfg, st); }
-                catch (System.Exception ex) { st.Status = "Lỗi: " + ex.Message; }
+
+                try
+                {
+                    Handle(act, doc, ed, cfg, st);
+                }
+                catch (System.Exception ex)
+                {
+                    st.Status = "Lỗi: " + ex.Message;
+                }
             }
         }
 
-        void Handle(BpAction act, Document doc, Editor ed, BpConfig cfg, BpState st)
+        void Handle(
+            BpAction act,
+            Document doc,
+            Editor ed,
+            BpConfig cfg,
+            BpState st)
         {
             switch (act)
             {
@@ -55,109 +71,252 @@ namespace BatchPlotBP
                     break;
 
                 case BpAction.Number:
+                    if (st.Frames.Count == 0)
+                        Scan(doc, ed, cfg, st);
+
+                    if (st.Frames.Count > 0)
                     {
-                        if (st.Frames.Count == 0) Scan(doc, ed, cfg, st);
-                        if (st.Frames.Count > 0)
-                        {
-                            FrameService.AddNumbers(doc, FrameService.Sort(st.Frames, cfg));
-                            st.Status = "Đã đánh STT cho " + st.Frames.Count + " khung (layer BPL_STT, không bị in).";
-                        }
-                        break;
+                        FrameService.AddNumbers(
+                            doc,
+                            FrameService.Sort(st.Frames, cfg));
+
+                        st.Status =
+                            "Đã đánh STT cho " +
+                            st.Frames.Count +
+                            " khung (layer BPL_STT).";
                     }
+                    break;
 
                 case BpAction.ClearNumber:
                     {
                         int n = FrameService.ClearNumbers(doc);
                         st.Status = "Đã xóa " + n + " STT.";
-                        break;
                     }
+                    break;
 
                 case BpAction.Plot:
-                    {
-                        if (st.Frames.Count == 0) Scan(doc, ed, cfg, st);
-                        if (st.Frames.Count == 0) break;
-                        List<Frame> ordered = FrameService.Sort(st.Frames, cfg);
-                        string err;
-                        int ok = PlotService.Plot(doc, ordered, cfg, out err);
-                        st.Status = "Hoàn tất: " + ok + "/" + ordered.Count + " trang."
-                                    + (err != null ? " Lỗi: " + err : "");
-                        break;
-                    }
+                    Plot(doc, ed, cfg, st);
+                    break;
 
                 case BpAction.OpenFolder:
-                    Process.Start("explorer.exe", PlotService.OutFolder(doc));
+                    OpenOutputFolder(st);
                     break;
             }
         }
 
-        void PickSample(Document doc, Editor ed, BpConfig cfg, BpState st)
+        void Plot(Document doc, Editor ed, BpConfig cfg, BpState st)
         {
-            PromptEntityResult per = ed.GetEntity("\nChọn 1 khung mẫu: ");
-            if (per.Status != PromptStatus.OK) return;
+            if (st.Frames.Count == 0)
+                Scan(doc, ed, cfg, st);
+
+            if (st.Frames.Count == 0)
+                return;
+
+            using (var dialog = new FolderBrowserDialog())
+            {
+                dialog.Description = "Chọn thư mục lưu các file PDF";
+                dialog.ShowNewFolderButton = true;
+
+                string initial = PlotService.OutFolder(doc, cfg);
+
+                if (!string.IsNullOrWhiteSpace(initial) &&
+                    System.IO.Directory.Exists(initial))
+                {
+                    dialog.SelectedPath = initial;
+                }
+
+                if (dialog.ShowDialog() != DialogResult.OK)
+                {
+                    st.Status = "Đã hủy thao tác in.";
+                    return;
+                }
+
+                cfg.OutputFolder = dialog.SelectedPath;
+                cfg.Save();
+            }
+
+            List<Frame> ordered = FrameService.Sort(st.Frames, cfg);
+
+            string err;
+            int ok = PlotService.Plot(doc, ordered, cfg, out err);
+
+            st.LastPlotSucceeded =
+                ok == ordered.Count &&
+                string.IsNullOrEmpty(err);
+
+            st.OutputFolder =
+                st.LastPlotSucceeded ? cfg.OutputFolder : "";
+
+            st.Status =
+                "Hoàn tất: " + ok + "/" + ordered.Count + " trang." +
+                (string.IsNullOrEmpty(err) ? "" : " Lỗi: " + err) +
+                (st.LastPlotSucceeded
+                    ? " Thư mục: " + st.OutputFolder
+                    : "");
+        }
+
+        void OpenOutputFolder(BpState st)
+        {
+            if (st.LastPlotSucceeded &&
+                !string.IsNullOrWhiteSpace(st.OutputFolder) &&
+                System.IO.Directory.Exists(st.OutputFolder))
+            {
+                Process.Start(
+                    new ProcessStartInfo
+                    {
+                        FileName = st.OutputFolder,
+                        UseShellExecute = true
+                    });
+            }
+            else
+            {
+                st.Status =
+                    "Chưa có thư mục PDF hợp lệ. Hãy in thành công trước.";
+            }
+        }
+
+        void PickSample(
+            Document doc,
+            Editor ed,
+            BpConfig cfg,
+            BpState st)
+        {
+            PromptEntityResult per =
+                ed.GetEntity("\nChọn 1 khung mẫu: ");
+
+            if (per.Status != PromptStatus.OK)
+                return;
 
             string layer;
-            using (var tr = doc.Database.TransactionManager.StartTransaction())
+
+            using (var tr =
+                doc.Database.TransactionManager.StartTransaction())
             {
-                var ent = (Entity)tr.GetObject(per.ObjectId, OpenMode.ForRead);
+                Entity ent =
+                    tr.GetObject(per.ObjectId, OpenMode.ForRead) as Entity;
+
+                if (ent == null)
+                {
+                    st.Status = "Đối tượng đã chọn không hợp lệ.";
+                    return;
+                }
+
                 layer = ent.Layer;
                 tr.Commit();
             }
 
-            var pko = new PromptKeywordOptions("\nGóc chuẩn để sắp xếp");
-            foreach (string a in FrameService.Anchors) pko.Keywords.Add(a);
+            var pko = new PromptKeywordOptions(
+                "\nGóc chuẩn để sắp xếp");
+
+            foreach (string a in FrameService.Anchors)
+                pko.Keywords.Add(a);
+
             pko.Keywords.Default = "TopLeft";
             pko.AllowNone = true;
-            PromptResult kr = ed.GetKeywords(pko);
-            if (kr.Status != PromptStatus.OK && kr.Status != PromptStatus.None) return;
-            string anchor = string.IsNullOrEmpty(kr.StringResult) ? "TopLeft" : kr.StringResult;
 
-            cfg.Samples.RemoveAll(s => string.Equals(s.Layer, layer, StringComparison.OrdinalIgnoreCase));
-            cfg.Samples.Add(new SampleDef { Layer = layer, Anchor = anchor });
+            PromptResult kr = ed.GetKeywords(pko);
+
+            if (kr.Status != PromptStatus.OK &&
+                kr.Status != PromptStatus.None)
+                return;
+
+            string anchor =
+                string.IsNullOrEmpty(kr.StringResult)
+                    ? "TopLeft"
+                    : kr.StringResult;
+
+            cfg.Samples.RemoveAll(
+                s => string.Equals(
+                    s.Layer,
+                    layer,
+                    StringComparison.OrdinalIgnoreCase));
+
+            cfg.Samples.Add(
+                new SampleDef
+                {
+                    Layer = layer,
+                    Anchor = anchor
+                });
+
             cfg.Save();
+
             st.Frames.Clear();
-            st.Status = "Đã thêm khung mẫu: layer " + layer + " / " + anchor + ". Hãy quét khung.";
+            st.Status =
+                "Đã thêm khung mẫu: layer " +
+                layer + " / " + anchor +
+                ". Hãy quét khung.";
         }
 
-        void Scan(Document doc, Editor ed, BpConfig cfg, BpState st)
+        void Scan(
+            Document doc,
+            Editor ed,
+            BpConfig cfg,
+            BpState st)
         {
             st.Frames.Clear();
+
             if (cfg.Samples.Count == 0)
             {
-                st.Status = "Chưa có khung mẫu. Bấm 'Chọn khung mẫu' trước.";
+                st.Status =
+                    "Chưa có khung mẫu. Bấm 'Chọn khung mẫu' trước.";
                 return;
             }
 
             var ids = new List<ObjectId>();
+
             if (cfg.SortMode == "Pick")
             {
-                ed.WriteMessage("\nChọn từng khung theo thứ tự in. Enter để kết thúc.");
+                ed.WriteMessage(
+                    "\nChọn từng khung theo thứ tự in. Enter để kết thúc.");
+
                 while (true)
                 {
-                    PromptEntityResult r = ed.GetEntity("\nChọn khung (Enter để kết thúc): ");
-                    if (r.Status != PromptStatus.OK) break;
+                    PromptEntityResult r =
+                        ed.GetEntity("\nChọn khung (Enter để kết thúc): ");
+
+                    if (r.Status != PromptStatus.OK)
+                        break;
+
                     ids.Add(r.ObjectId);
                 }
             }
             else
             {
-                var pko = new PromptKeywordOptions("\nQuét khung [Toan/Vung]");
+                var pko = new PromptKeywordOptions(
+                    "\nQuét khung [Toan/Vung]");
+
                 pko.Keywords.Add("Toan");
                 pko.Keywords.Add("Vung");
                 pko.Keywords.Default = "Toan";
                 pko.AllowNone = true;
-                PromptResult kr = ed.GetKeywords(pko);
-                if (kr.Status != PromptStatus.OK && kr.Status != PromptStatus.None) return;
 
-                SelectionFilter filter = FrameService.MakeFilter(cfg, false);
-                PromptSelectionResult sr = (kr.StringResult == "Vung")
-                    ? ed.GetSelection(filter)
-                    : ed.SelectAll(filter);
-                if (sr.Status == PromptStatus.OK) ids.AddRange(sr.Value.GetObjectIds());
+                PromptResult kr = ed.GetKeywords(pko);
+
+                if (kr.Status != PromptStatus.OK &&
+                    kr.Status != PromptStatus.None)
+                    return;
+
+                SelectionFilter filter =
+                    FrameService.MakeFilter(cfg, false);
+
+                PromptSelectionResult sr =
+                    string.Equals(
+                        kr.StringResult,
+                        "Vung",
+                        StringComparison.OrdinalIgnoreCase)
+                        ? ed.GetSelection(filter)
+                        : ed.SelectAll(filter);
+
+                if (sr.Status == PromptStatus.OK)
+                    ids.AddRange(sr.Value.GetObjectIds());
             }
 
-            st.Frames = FrameService.ToFrames(doc.Database, ids, cfg);
+            st.Frames =
+                FrameService.ToFrames(doc.Database, ids, cfg);
+
             st.Status = st.Frames.Count > 0
-                ? "Đã quét: " + st.Frames.Count + " khung sẵn sàng."
+                ? "Đã quét: " + st.Frames.Count +
+                  " khung sẵn sàng."
                 : FrameService.Diagnose(doc, cfg);
         }
     }
