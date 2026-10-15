@@ -1,0 +1,34 @@
+
+name: Build BatchPlot for AutoCAD 2025
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore packages
+        run: dotnet restore BatchPlotRebuild.csproj
+        working-directory: BatchPlot_Rebuild
+
+      - name: Build DLL
+        run: dotnet build BatchPlotRebuild.csproj -c Release --no-restore
+        working-directory: BatchPlot_Rebuild
+
+      - name: Upload DLL
+        uses: actions/upload-artifact@v4
+        with:
+          name: BatchPlotRebuild-DLL
+          path: BatchPlot_Rebuild/bin/Release/net8.0-windows/BatchPlotRebuild.dll
