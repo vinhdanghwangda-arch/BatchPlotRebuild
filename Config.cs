@@ -8,44 +8,60 @@ namespace BatchPlotBP
     public class SampleDef
     {
         public string Layer;
-        public string Anchor; // TopLeft | TopRight | BottomLeft | BottomRight
+        public string Anchor;
     }
 
-    /// <summary>Doc/ghi BatchPlot.cfg cung dinh dang voi ban goc (nam canh file DLL).</summary>
     public class BpConfig
     {
         public string Printer = "AutoCAD PDF (High Quality Print).pc3";
         public string Paper = "ISO_expand_A4_(297.00_x_210.00_MM)";
         public string PlotStyle = "acad.ctb";
-        public string Orientation = "Landscape"; // Landscape | Portrait | Auto
+        public string Orientation = "Landscape";
         public bool MergePdf = false;
         public bool Collate = false;
-        public string SortMode = "TopDown";      // TopDown | LeftRight | Pick
+        public string SortMode = "TopDown";
+
+        // New output and file-name settings
+        public string OutputFolder = "";
+        public string NameMode = "Cad";       // Cad | Text
+        public string NameObjectType = "Both"; // Text | MText | Both
+        public string NameLayer = "";
+
         public List<SampleDef> Samples = new List<SampleDef>();
 
         public static string CfgPath
         {
             get
             {
-                string dir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+                string dir = Path.GetDirectoryName(
+                    Assembly.GetExecutingAssembly().Location);
                 return Path.Combine(dir, "BatchPlot.cfg");
             }
         }
 
-        static bool B(string v) { return string.Equals(v, "True", StringComparison.OrdinalIgnoreCase); }
+        static bool B(string v)
+        {
+            return string.Equals(
+                v, "True", StringComparison.OrdinalIgnoreCase);
+        }
 
         public static BpConfig Load()
         {
             var c = new BpConfig();
+
             try
             {
-                if (!File.Exists(CfgPath)) return c;
+                if (!File.Exists(CfgPath))
+                    return c;
+
                 foreach (string raw in File.ReadAllLines(CfgPath))
                 {
                     int p = raw.IndexOf('=');
                     if (p <= 0) continue;
+
                     string k = raw.Substring(0, p).Trim();
                     string v = raw.Substring(p + 1).Trim();
+
                     switch (k)
                     {
                         case "Printer": c.Printer = v; break;
@@ -55,14 +71,30 @@ namespace BatchPlotBP
                         case "MergePdf": c.MergePdf = B(v); break;
                         case "Collate": c.Collate = B(v); break;
                         case "SortMode": c.SortMode = v; break;
+                        case "OutputFolder": c.OutputFolder = v; break;
+                        case "NameMode": c.NameMode = v; break;
+                        case "NameObjectType": c.NameObjectType = v; break;
+                        case "NameLayer": c.NameLayer = v; break;
+
                         case "Sample":
                             string[] a = v.Split('|');
-                            if (a.Length == 3) c.Samples.Add(new SampleDef { Layer = a[1], Anchor = a[2] });
+                            if (a.Length == 3)
+                            {
+                                c.Samples.Add(new SampleDef
+                                {
+                                    Layer = a[1],
+                                    Anchor = a[2]
+                                });
+                            }
                             break;
                     }
                 }
             }
-            catch { }
+            catch
+            {
+                // Keep defaults if the configuration cannot be read.
+            }
+
             return c;
         }
 
@@ -78,12 +110,22 @@ namespace BatchPlotBP
                     "Orientation=" + Orientation,
                     "MergePdf=" + (MergePdf ? "True" : "False"),
                     "Collate=" + (Collate ? "True" : "False"),
-                    "SortMode=" + SortMode
+                    "SortMode=" + SortMode,
+                    "OutputFolder=" + (OutputFolder ?? ""),
+                    "NameMode=" + (NameMode ?? "Cad"),
+                    "NameObjectType=" + (NameObjectType ?? "Both"),
+                    "NameLayer=" + (NameLayer ?? "")
                 };
-                foreach (var s in Samples) lines.Add("Sample=LAYER|" + s.Layer + "|" + s.Anchor);
+
+                foreach (var s in Samples)
+                    lines.Add("Sample=LAYER|" + s.Layer + "|" + s.Anchor);
+
                 File.WriteAllLines(CfgPath, lines.ToArray());
             }
-            catch { }
+            catch
+            {
+                // Configuration persistence failure should not crash AutoCAD.
+            }
         }
     }
 
@@ -91,5 +133,7 @@ namespace BatchPlotBP
     {
         public List<Frame> Frames = new List<Frame>();
         public string Status = "";
+        public string OutputFolder = "";
+        public bool LastPlotSucceeded = false;
     }
 }
