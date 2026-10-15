@@ -14,19 +14,31 @@ namespace BatchPlotBP
 {
     public static class PlotService
     {
-        public static string OutFolder(Document doc, BpConfig cfg = null)
+        public static string OutFolder(
+            Document doc,
+            BpConfig cfg = null)
         {
             string dir = cfg == null ? null : cfg.OutputFolder;
 
-            if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir))
+            if (string.IsNullOrWhiteSpace(dir) ||
+                !Directory.Exists(dir))
             {
-                try { dir = Path.GetDirectoryName(doc.Name); }
-                catch { dir = null; }
+                try
+                {
+                    dir = Path.GetDirectoryName(doc.Name);
+                }
+                catch
+                {
+                    dir = null;
+                }
             }
 
-            if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir))
+            if (string.IsNullOrWhiteSpace(dir) ||
+                !Directory.Exists(dir))
+            {
                 dir = Environment.GetFolderPath(
                     Environment.SpecialFolder.MyDocuments);
+            }
 
             return dir;
         }
@@ -39,7 +51,8 @@ namespace BatchPlotBP
             foreach (char c in Path.GetInvalidFileNameChars())
                 value = value.Replace(c, '_');
 
-            value = Regex.Replace(value.Trim(), @"\s+", "_");
+            // Preserve spaces in PDF file names.
+            value = value.Trim();
             value = value.Trim('.', ' ');
 
             return string.IsNullOrWhiteSpace(value)
@@ -47,30 +60,43 @@ namespace BatchPlotBP
                 : value;
         }
 
-        static string TextName(Database db, Frame frame, BpConfig cfg)
+        static string TextName(
+            Database db,
+            Frame frame,
+            BpConfig cfg)
         {
             if (cfg == null ||
                 cfg.NameMode != "Text" ||
                 string.IsNullOrWhiteSpace(cfg.NameLayer))
+            {
                 return null;
+            }
 
-            var candidates = new List<Tuple<double, string, string>>();
+            var candidates =
+                new List<Tuple<double, string, string>>();
 
-            using (var tr = db.TransactionManager.StartTransaction())
+            using (var tr =
+                db.TransactionManager.StartTransaction())
             {
                 var space = (BlockTableRecord)tr.GetObject(
-                    db.CurrentSpaceId, OpenMode.ForRead);
+                    db.CurrentSpaceId,
+                    OpenMode.ForRead);
 
                 foreach (ObjectId id in space)
                 {
-                    var ent = tr.GetObject(id, OpenMode.ForRead) as Entity;
+                    var ent =
+                        tr.GetObject(
+                            id,
+                            OpenMode.ForRead) as Entity;
 
                     if (ent == null ||
                         !string.Equals(
                             ent.Layer,
                             cfg.NameLayer,
                             StringComparison.OrdinalIgnoreCase))
+                    {
                         continue;
+                    }
 
                     string value = null;
                     Point3d pos = Point3d.Origin;
@@ -95,24 +121,39 @@ namespace BatchPlotBP
                     if (string.IsNullOrWhiteSpace(value))
                         continue;
 
-                    if (pos.X < frame.MinX || pos.X > frame.MaxX ||
-                        pos.Y < frame.MinY || pos.Y > frame.MaxY)
+                    if (pos.X < frame.MinX ||
+                        pos.X > frame.MaxX ||
+                        pos.Y < frame.MinY ||
+                        pos.Y > frame.MaxY)
+                    {
                         continue;
+                    }
 
-                    double cx = (frame.MinX + frame.MaxX) / 2.0;
-                    double cy = (frame.MinY + frame.MaxY) / 2.0;
+                    double cx =
+                        (frame.MinX + frame.MaxX) / 2.0;
+
+                    double cy =
+                        (frame.MinY + frame.MaxY) / 2.0;
 
                     double d =
                         Math.Pow(pos.X - cx, 2) +
                         Math.Pow(pos.Y - cy, 2);
 
-                    value = Regex.Replace(value, @"\\[A-Za-z]+[^;]*;", " ");
+                    // Remove common MText formatting codes.
+                    value = Regex.Replace(
+                        value,
+                        @"\\[A-Za-z]+[^;]*;",
+                        " ");
+
                     value = value.Replace("{", " ")
                                  .Replace("}", " ")
                                  .Replace("\\P", " ");
 
                     candidates.Add(
-                        Tuple.Create(d, value.Trim(), ent.GetType().Name));
+                        Tuple.Create(
+                            d,
+                            value.Trim(),
+                            ent.GetType().Name));
                 }
 
                 tr.Commit();
@@ -123,7 +164,55 @@ namespace BatchPlotBP
 
             // If multiple labels exist, choose the one nearest to frame center.
             return SafeFileName(
-                candidates.OrderBy(x => x.Item1).First().Item2);
+                candidates
+                    .OrderBy(x => x.Item1)
+                    .First()
+                    .Item2);
+        }
+
+        /// <summary>
+        /// Finds duplicate TEXT/MTEXT names among the selected frames.
+        /// Comparison ignores letter case.
+        /// </summary>
+        public static List<string> FindDuplicateTextNames(
+            Document doc,
+            List<Frame> frames,
+            BpConfig cfg)
+        {
+            var duplicates = new List<string>();
+
+            if (doc == null ||
+                cfg == null ||
+                cfg.NameMode != "Text" ||
+                frames == null ||
+                frames.Count == 0)
+            {
+                return duplicates;
+            }
+
+            var names = new List<string>();
+
+            foreach (Frame frame in frames)
+            {
+                string name = TextName(
+                    doc.Database,
+                    frame,
+                    cfg);
+
+                if (!string.IsNullOrWhiteSpace(name))
+                    names.Add(name);
+            }
+
+            return names
+                .GroupBy(
+                    name => name,
+                    StringComparer.OrdinalIgnoreCase)
+                .Where(group => group.Count() > 1)
+                .Select(group => group.Key)
+                .OrderBy(
+                    name => name,
+                    StringComparer.OrdinalIgnoreCase)
+                .ToList();
         }
 
         static string OutputName(
@@ -144,7 +233,47 @@ namespace BatchPlotBP
             if (string.IsNullOrWhiteSpace(drawingName))
                 drawingName = SafeFileName(baseName);
 
+            // Text mode: use the TEXT/MTEXT name without numeric prefix.
+            if (cfg != null && cfg.NameMode == "Text")
+                return drawingName;
+
+            // CAD mode: retain the existing numeric prefix.
             return index.ToString("000") + "_" + drawingName;
+        }
+
+        /// <summary>
+        /// Generates a unique PDF path without overwriting existing files.
+        /// Spaces in file names are preserved.
+        /// </summary>
+        static string UniquePdfPath(
+            string folder,
+            string outputName,
+            HashSet<string> reservedPaths)
+        {
+            string baseName =
+                Path.GetFileNameWithoutExtension(outputName);
+
+            baseName = SafeFileName(baseName);
+
+            string candidate = Path.Combine(
+                folder,
+                baseName + ".pdf");
+
+            int suffix = 1;
+
+            while (File.Exists(candidate) ||
+                   reservedPaths.Contains(candidate))
+            {
+                candidate = Path.Combine(
+                    folder,
+                    baseName + " (" + suffix + ").pdf");
+
+                suffix++;
+            }
+
+            reservedPaths.Add(candidate);
+
+            return candidate;
         }
 
         static bool PaperLandscape(string paper)
@@ -157,14 +286,19 @@ namespace BatchPlotBP
                 return true;
 
             double w = double.Parse(
-                m.Groups[1].Value, CultureInfo.InvariantCulture);
+                m.Groups[1].Value,
+                CultureInfo.InvariantCulture);
+
             double h = double.Parse(
-                m.Groups[2].Value, CultureInfo.InvariantCulture);
+                m.Groups[2].Value,
+                CultureInfo.InvariantCulture);
 
             return w > h;
         }
 
-        static PlotRotation Rotation(Frame f, BpConfig cfg)
+        static PlotRotation Rotation(
+            Frame f,
+            BpConfig cfg)
         {
             bool paperLand = PaperLandscape(cfg.Paper);
 
@@ -186,13 +320,23 @@ namespace BatchPlotBP
             var ps = new PlotSettings(lo.ModelType);
             ps.CopyFrom(lo);
 
-            PlotSettingsValidator v = PlotSettingsValidator.Current;
+            PlotSettingsValidator v =
+                PlotSettingsValidator.Current;
 
-            v.SetPlotConfigurationName(ps, cfg.Printer, cfg.Paper);
+            v.SetPlotConfigurationName(
+                ps,
+                cfg.Printer,
+                cfg.Paper);
+
             v.RefreshLists(ps);
+
             v.SetPlotWindowArea(
                 ps,
-                new Extents2d(f.MinX, f.MinY, f.MaxX, f.MaxY));
+                new Extents2d(
+                    f.MinX,
+                    f.MinY,
+                    f.MaxX,
+                    f.MaxY));
 
             v.SetPlotType(
                 ps,
@@ -210,8 +354,11 @@ namespace BatchPlotBP
                 OverrideSettings = ps
             };
 
-            var piv = new PlotInfoValidator();
-            piv.MediaMatchingPolicy = MatchingPolicy.MatchEnabled;
+            var piv = new PlotInfoValidator
+            {
+                MediaMatchingPolicy = MatchingPolicy.MatchEnabled
+            };
+
             piv.Validate(pi);
 
             return pi;
@@ -231,6 +378,7 @@ namespace BatchPlotBP
                 "Đang in: " + name);
 
             ppd.OnBeginSheet();
+
             ppd.LowerSheetProgressRange = 0;
             ppd.UpperSheetProgressRange = 100;
             ppd.SheetProgressPos = 0;
@@ -248,7 +396,8 @@ namespace BatchPlotBP
             ppd.SheetProgressPos = 100;
             ppd.OnEndSheet();
 
-            ppd.PlotProgressPos = (index + 1) * 100 / total;
+            ppd.PlotProgressPos =
+                (index + 1) * 100 / total;
         }
 
         /// <summary>
@@ -283,7 +432,9 @@ namespace BatchPlotBP
             object oldBg =
                 Application.GetSystemVariable("BACKGROUNDPLOT");
 
-            Application.SetSystemVariable("BACKGROUNDPLOT", 0);
+            Application.SetSystemVariable(
+                "BACKGROUNDPLOT",
+                0);
 
             int done = 0;
 
@@ -295,19 +446,61 @@ namespace BatchPlotBP
                 string baseName = SafeFileName(
                     Path.GetFileNameWithoutExtension(doc.Name));
 
+                // Reserve output paths before plotting so duplicate names
+                // and existing files cannot cause accidental overwrites.
+                var reservedPaths =
+                    new HashSet<string>(
+                        StringComparer.OrdinalIgnoreCase);
+
+                var individualPdfPaths =
+                    new List<string>();
+
+                if (!cfg.MergePdf)
+                {
+                    for (int i = 0; i < total; i++)
+                    {
+                        string outputName = OutputName(
+                            db,
+                            doc,
+                            frames[i],
+                            cfg,
+                            i + 1);
+
+                        individualPdfPaths.Add(
+                            UniquePdfPath(
+                                folder,
+                                outputName,
+                                reservedPaths));
+                    }
+                }
+                else
+                {
+                    // The merged PDF is also assigned a unique file path.
+                    individualPdfPaths.Add(
+                        UniquePdfPath(
+                            folder,
+                            baseName,
+                            reservedPaths));
+                }
+
                 using (var tr =
                     db.TransactionManager.StartTransaction())
                 {
                     var btr = (BlockTableRecord)tr.GetObject(
-                        db.CurrentSpaceId, OpenMode.ForRead);
+                        db.CurrentSpaceId,
+                        OpenMode.ForRead);
 
                     var lo = (Layout)tr.GetObject(
-                        btr.LayoutId, OpenMode.ForRead);
+                        btr.LayoutId,
+                        OpenMode.ForRead);
 
                     using (PlotEngine pe =
                         PlotFactory.CreatePublishEngine())
                     using (var ppd =
-                        new PlotProgressDialog(false, total, true))
+                        new PlotProgressDialog(
+                            false,
+                            total,
+                            true))
                     {
                         ppd.set_PlotMsgString(
                             PlotMessageIndex.DialogTitle,
@@ -341,29 +534,38 @@ namespace BatchPlotBP
                         if (cfg.MergePdf)
                         {
                             // One PDF document with multiple pages.
-                            string file = Path.Combine(
-                                folder, baseName + ".pdf");
+                            string file = individualPdfPaths[0];
 
-                            if (File.Exists(file))
-                                File.Delete(file);
-
-                            PlotInfo first =
-                                MakePlotInfo(lo, frames[0], cfg);
+                            PlotInfo first = MakePlotInfo(
+                                lo,
+                                frames[0],
+                                cfg);
 
                             pe.BeginDocument(
-                                first, doc.Name, null, 1, true, file);
+                                first,
+                                doc.Name,
+                                null,
+                                total,
+                                true,
+                                file);
 
                             for (int i = 0; i < total; i++)
                             {
                                 PlotInfo pi =
                                     i == 0
                                         ? first
-                                        : MakePlotInfo(lo, frames[i], cfg);
+                                        : MakePlotInfo(
+                                            lo,
+                                            frames[i],
+                                            cfg);
 
                                 DoPage(
-                                    pe, ppd, pi,
+                                    pe,
+                                    ppd,
+                                    pi,
                                     i == total - 1,
-                                    i, total,
+                                    i,
+                                    total,
                                     (i + 1) + "/" + total);
 
                                 done++;
@@ -376,33 +578,40 @@ namespace BatchPlotBP
                             // One PDF file for each frame.
                             for (int i = 0; i < total; i++)
                             {
-                                string file = Path.Combine(
-                                    folder,
-                                    OutputName(
-                                        db, doc, frames[i], cfg, i + 1)
-                                    + ".pdf");
+                                string file =
+                                    individualPdfPaths[i];
 
-                                if (File.Exists(file))
-                                    File.Delete(file);
-
-                                PlotInfo pi =
-                                    MakePlotInfo(lo, frames[i], cfg);
+                                PlotInfo pi = MakePlotInfo(
+                                    lo,
+                                    frames[i],
+                                    cfg);
 
                                 pe.BeginDocument(
-                                    pi, doc.Name, null, 1, true, file);
+                                    pi,
+                                    doc.Name,
+                                    null,
+                                    1,
+                                    true,
+                                    file);
 
                                 DoPage(
-                                    pe, ppd, pi, true,
-                                    i, total,
+                                    pe,
+                                    ppd,
+                                    pi,
+                                    true,
+                                    i,
+                                    total,
                                     (i + 1) + "/" + total);
 
                                 pe.EndDocument(null);
+
                                 done++;
                             }
                         }
 
                         ppd.PlotProgressPos = 100;
                         ppd.OnEndPlot();
+
                         pe.EndPlot(null);
                     }
 
@@ -416,7 +625,8 @@ namespace BatchPlotBP
             finally
             {
                 Application.SetSystemVariable(
-                    "BACKGROUNDPLOT", oldBg);
+                    "BACKGROUNDPLOT",
+                    oldBg);
             }
 
             return done;
