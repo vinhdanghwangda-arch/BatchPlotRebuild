@@ -1,31 +1,19 @@
-<Project Sdk="Microsoft.NET.Sdk">
 
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <!-- AutoCAD 2024 tro xuong: net48.  AutoCAD 2025 tro len: doi thanh net8.0-windows -->
-    <TargetFramework>net48</TargetFramework>
+    <TargetFramework>net8.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
-    <AssemblyName>BatchPlotBP</AssemblyName>
-    <RootNamespace>BatchPlotBP</RootNamespace>
+    <OutputType>Library</OutputType>
+    <AssemblyName>BatchPlotRebuild</AssemblyName>
+    <RootNamespace>BatchPlotRebuild</RootNamespace>
     <LangVersion>latest</LangVersion>
-    <ImplicitUsings>disable</ImplicitUsings>
+    <PlatformTarget>x64</PlatformTarget>
     <Nullable>disable</Nullable>
-    <!-- Sua duong dan nay cho dung ban AutoCAD cua ban -->
-    <AcadPath>C:\Program Files\Autodesk\AutoCAD 2024</AcadPath>
+    <ImplicitUsings>disable</ImplicitUsings>
   </PropertyGroup>
 
   <ItemGroup>
-    <Reference Include="accoremgd">
-      <HintPath>$(AcadPath)\accoremgd.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <Reference Include="acdbmgd">
-      <HintPath>$(AcadPath)\acdbmgd.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <Reference Include="acmgd">
-      <HintPath>$(AcadPath)\acmgd.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
+    <PackageReference Include="AutoCAD.NET" Version="25.0.1"
+                      ExcludeAssets="runtime" />
   </ItemGroup>
-
 </Project>
