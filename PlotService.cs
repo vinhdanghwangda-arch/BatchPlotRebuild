@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Text.RegularExpressions;
 using System.Linq;
+using System.Windows.Forms;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Geometry;
@@ -400,6 +401,117 @@ namespace BatchPlotBP
                 (index + 1) * 100 / total;
         }
 
+        private static int PlotCustomIndividual(
+            Document doc,
+            List<Frame> frames,
+            BpConfig cfg,
+            out string err)
+        {
+            err = null;
+            int done = 0;
+            Database db = doc.Database;
+            string initialFolder = OutFolder(doc, cfg);
+            string drawingBase = SafeFileName(
+                Path.GetFileNameWithoutExtension(doc.Name));
+            object oldBg = Application.GetSystemVariable("BACKGROUNDPLOT");
+
+            Application.SetSystemVariable("BACKGROUNDPLOT", 0);
+            try
+            {
+                for (int i = 0; i < frames.Count; i++)
+                {
+                    string suggestedName = drawingBase + "_" + (i + 1).ToString("000") + ".pdf";
+                    string chosenPath;
+
+                    using (var dialog = new SaveFileDialog())
+                    {
+                        dialog.Title = "Đặt tên PDF - bản vẽ " + (i + 1) + "/" + frames.Count;
+                        dialog.Filter = "PDF Document (*.pdf)|*.pdf";
+                        dialog.FilterIndex = 1;
+                        dialog.DefaultExt = "pdf";
+                        dialog.AddExtension = true;
+                        dialog.CheckPathExists = true;
+                        dialog.OverwritePrompt = true;
+                        dialog.RestoreDirectory = true;
+                        dialog.FileName = suggestedName;
+                        dialog.InitialDirectory =
+                            !string.IsNullOrWhiteSpace(cfg.OutputFolder) && Directory.Exists(cfg.OutputFolder)
+                                ? cfg.OutputFolder
+                                : initialFolder;
+
+                        if (dialog.ShowDialog() != DialogResult.OK)
+                        {
+                            err = "Đã hủy từ bản vẽ " + (i + 1) + ". Đã in " + done + "/" + frames.Count + " file.";
+                            break;
+                        }
+
+                        chosenPath = dialog.FileName;
+                    }
+
+                    string chosenFolder = Path.GetDirectoryName(chosenPath);
+                    if (string.IsNullOrWhiteSpace(chosenFolder) || !Directory.Exists(chosenFolder))
+                    {
+                        err = "Thư mục lưu không hợp lệ: " + chosenFolder;
+                        break;
+                    }
+
+                    // Save the last folder so the next dialog opens there.
+                    cfg.OutputFolder = chosenFolder;
+                    cfg.Save();
+                    initialFolder = chosenFolder;
+
+                    try
+                    {
+                        using (var tr = db.TransactionManager.StartTransaction())
+                        {
+                            var btr = (BlockTableRecord)tr.GetObject(db.CurrentSpaceId, OpenMode.ForRead);
+                            var lo = (Layout)tr.GetObject(btr.LayoutId, OpenMode.ForRead);
+                            PlotInfo pi = MakePlotInfo(lo, frames[i], cfg);
+
+                            using (PlotEngine pe = PlotFactory.CreatePublishEngine())
+                            using (var ppd = new PlotProgressDialog(false, 1, true))
+                            {
+                                ppd.set_PlotMsgString(PlotMessageIndex.DialogTitle, "Batch Plot - PDF tùy chọn");
+                                ppd.set_PlotMsgString(PlotMessageIndex.CancelJobButtonMessage, "Hủy toàn bộ");
+                                ppd.set_PlotMsgString(PlotMessageIndex.CancelSheetButtonMessage, "Hủy trang này");
+                                ppd.set_PlotMsgString(PlotMessageIndex.SheetSetProgressCaption, "Tiến độ");
+                                ppd.set_PlotMsgString(PlotMessageIndex.SheetProgressCaption, "Trang hiện tại");
+                                ppd.LowerPlotProgressRange = 0;
+                                ppd.UpperPlotProgressRange = 100;
+                                ppd.PlotProgressPos = 0;
+                                ppd.OnBeginPlot();
+                                ppd.IsVisible = true;
+                                pe.BeginPlot(ppd, null);
+                                pe.BeginDocument(pi, doc.Name, null, 1, true, chosenPath);
+                                DoPage(pe, ppd, pi, true, i, frames.Count, (i + 1) + "/" + frames.Count);
+                                pe.EndDocument(null);
+                                ppd.PlotProgressPos = 100;
+                                ppd.OnEndPlot();
+                                pe.EndPlot(null);
+                            }
+                            tr.Commit();
+                        }
+                        done++;
+                    }
+                    catch (System.Exception ex)
+                    {
+                        err = "Lỗi khi in file " + Path.GetFileName(chosenPath) + ": " + ex.Message;
+                        break;
+                    }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                err = ex.Message;
+            }
+            finally
+            {
+                Application.SetSystemVariable("BACKGROUNDPLOT", oldBg);
+            }
+
+            return done;
+        }
+
         /// <summary>
         /// Plots the ordered list of frames.
         /// Returns the number of completed pages and reports errors in err.
@@ -425,6 +537,17 @@ namespace BatchPlotBP
             {
                 err = "AutoCAD đang bận in, thử lại sau.";
                 return 0;
+            }
+
+            if (cfg != null && cfg.NameMode == "Custom")
+            {
+                if (cfg.MergePdf)
+                {
+                    err = "Chế độ 'Tuy chon' tạo từng file PDF riêng; hãy bỏ chọn 'Gộp thành 1 file PDF'.";
+                    return 0;
+                }
+
+                return PlotCustomIndividual(doc, frames, cfg, out err);
             }
 
             Database db = doc.Database;
